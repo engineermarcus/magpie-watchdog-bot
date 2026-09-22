@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { sleep, checkOne, reportAvailability, fetchJson, DELAY_MS } from "./check.mjs";
+import { sendWhatsAppMessage } from "./notify.mjs";
 
 const CLIENT_SERVER = process.env.CLIENT_SERVER;
 const ABORT_THRESHOLD = Number(process.env.FAILURE_RATE_ABORT_THRESHOLD || 0.3);
@@ -42,7 +43,7 @@ async function main() {
 
   let total = 0;
   let failures = 0;
-  const report = { unavailable: [], client_bugs: [], available_count: 0 };
+  const report = { unavailable: [], client_bugs: [], available_count: 0, available_titles: [] };
 
   const movieLimit = process.env.LIMIT ? Number(process.env.LIMIT) : uniqueMovies.length;
   for (const movie of uniqueMovies.slice(0, movieLimit)) {
@@ -52,6 +53,7 @@ async function main() {
     console.log(`  -> ${result.verdict}`);
     if (result.verdict === "available") {
       report.available_count++;
+      report.available_titles.push({ id: movie.id, title: movie.title, type: "movie" });
     } else if (result.verdict === "client_bug") {
       failures++;
       report.client_bugs.push({ id: movie.id, title: movie.title });
@@ -73,6 +75,11 @@ async function main() {
   if (rateSoFar > ABORT_THRESHOLD) {
     console.log(`[watchdog] ABORT: failure rate ${rateSoFar.toFixed(2)} exceeds threshold ${ABORT_THRESHOLD} — likely outage, not reporting individual titles`);
     console.log(JSON.stringify({ aborted: true, rateSoFar, checked: total }, null, 2));
+    try {
+      await sendWhatsAppMessage(`*Magpie Watchdog: OUTAGE SUSPECTED*\nFailure rate ${(rateSoFar * 100).toFixed(0)}% after ${total} checks. Aborting run — this looks like infrastructure down, not missing titles.`);
+    } catch (err) {
+      console.error("[watchdog] WhatsApp notify failed:", err.message);
+    }
     return;
   }
 
@@ -92,6 +99,7 @@ async function main() {
         });
         if (result.verdict === "available") {
           report.available_count++;
+          report.available_titles.push({ id: show.id, title: show.title, type: "tv", season: s.number, episode: ep });
         } else if (result.verdict === "client_bug") {
           failures++;
           report.client_bugs.push({ id: show.id, title: show.title, season: s.number, episode: ep });
@@ -112,6 +120,11 @@ async function main() {
       if (rateNow > ABORT_THRESHOLD) {
         console.log(`[watchdog] ABORT mid-run: failure rate ${rateNow.toFixed(2)} — likely outage`);
         console.log(JSON.stringify({ aborted: true, rateNow, checked: total }, null, 2));
+        try {
+          await sendWhatsAppMessage(`*Magpie Watchdog: OUTAGE SUSPECTED*\nFailure rate ${(rateNow * 100).toFixed(0)}% after ${total} checks. Aborting run — this looks like infrastructure down, not missing titles.`);
+        } catch (err) {
+          console.error("[watchdog] WhatsApp notify failed:", err.message);
+        }
         return;
       }
     }
@@ -120,6 +133,56 @@ async function main() {
   console.log("[watchdog] run complete");
   console.log(JSON.stringify(report, null, 2));
 
+  const now = new Date().toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const label = (item) => item.type === "movie" ? item.title : `${item.title} S${item.season}E${item.episode}`;
+
+  const summary = [
+    `*Magpie Watchdog Report* — ${now}`,
+    ``,
+    `Checked ${total} title(s) this cycle.`,
+  ];
+
+  if (report.available_titles.length) {
+    summary.push("", `✅ *Working (${report.available_titles.length}):*`);
+    for (const item of report.available_titles.slice(0, 20)) {
+      summary.push(`- ${label(item)}`);
+    }
+    if (report.available_titles.length > 20) {
+      summary.push(`...and ${report.available_titles.length - 20} more confirmed working`);
+    }
+  }
+
+  if (report.unavailable.length) {
+    summary.push("", `❌ *Not available — confirmed missing on both client and dispatch (${report.unavailable.length}):*`);
+    for (const item of report.unavailable.slice(0, 30)) {
+      summary.push(`- ${label(item)}`);
+    }
+    if (report.unavailable.length > 30) {
+      summary.push(`...and ${report.unavailable.length - 30} more`);
+    }
+  } else {
+    summary.push("", `❌ Not available: none`);
+  }
+
+  if (report.client_bugs.length) {
+    summary.push("", `⚠️ *Client server bug — dispatch has the stream but client server failed to serve it (${report.client_bugs.length}):*`);
+    for (const item of report.client_bugs.slice(0, 10)) {
+      summary.push(`- ${label(item)}`);
+    }
+  } else {
+    summary.push("", `⚠️ Client bugs: none`);
+  }
+
+  const isFullRun = !process.env.LIMIT && !process.env.SHOW_LIMIT;
+  if (isFullRun) {
+    try {
+      await sendWhatsAppMessage(summary.join("\n"));
+    } catch (err) {
+      console.error("[watchdog] WhatsApp notify failed:", err.message);
+    }
+  } else {
+    console.log("[watchdog] test run (LIMIT/SHOW_LIMIT set) — skipping WhatsApp report");
+  }
 }
 
 main().catch((err) => {

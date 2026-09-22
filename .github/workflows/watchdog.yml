@@ -27,9 +27,10 @@ jobs:
 
       - name: Run watchdog
         env:
-          CLIENT_SERVER: "https://magpie-client-server.onrender.com"
-          DISPATCH_SERVER: "https://magpie-dispatch-server.onrender.com"
-          BOT_KEY: "magpie"
-          DELAY_MS: "3000"
-          FAILURE_RATE_ABORT_THRESHOLD: "0.3"
+          CLIENT_SERVER: ${{ secrets.CLIENT_SERVER }}
+          DISPATCH_SERVER: ${{ secrets.DISPATCH_SERVER }}
+          BOT_KEY: ${{ secrets.BOT_KEY }}
+          DELAY_MS: ${{ secrets.DELAY_MS }}
+          FAILURE_RATE_ABORT_THRESHOLD: ${{ secrets.FAILURE_RATE_ABORT_THRESHOLD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: node run.mjs
