@@ -1,0 +1,33 @@
+name: Magpie Watchdog
+
+concurrency:
+  group: magpie-watchdog
+  cancel-in-progress: false
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run watchdog
+        env:
+          CLIENT_SERVER: "https://magpie-client-server.onrender.com"
+          DISPATCH_SERVER: "https://magpie-dispatch-server.onrender.com"
+          BOT_KEY: "magpie"
+          DELAY_MS: "3000"
+          FAILURE_RATE_ABORT_THRESHOLD: "0.3"
+        run: node run.mjs
